@@ -28,7 +28,10 @@
     "testing",
     "cli"
   ],
-  "repository": "github:rosehgal/pinocchio",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rosehgal/pinocchio.git"
+  },
   "license": "MIT",
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-11-03)
 
 - Audit Claude Code and Codex session logs: every "tests pass" claim labeled VERIFIED, STALE, UNVERIFIED or CONTRADICTED.
 - `--share` card rendered locally with satori and resvg. Quotes only contradicted claims.
