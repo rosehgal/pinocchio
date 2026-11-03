@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rosehgal/pinocchio/main/docs/banner.png" alt="Pinocchio: “All 42 tests pass.” said 48s after pytest -q failed" width="100%">
+  <img src="docs/banner.png" alt="Pinocchio: “All 42 tests pass.” said 48s after pytest -q failed" width="100%">
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@ npx pinocchio-cli
 It reads your **Claude Code** and **Codex** session logs, finds every time the agent said the tests pass, and checks the claim against the test commands in the log. Catch a claim made right after a failing run, and the nose grows.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/rosehgal/pinocchio/main/docs/demo.gif" alt="Terminal: npx pinocchio-cli finds 2 contradicted claims, then standup lists verified work and IOUs" width="100%">
+  <img src="docs/demo.gif" alt="Terminal: npx pinocchio-cli finds 2 contradicted claims, then standup lists verified work and IOUs" width="100%">
 </p>
 
 <sub>Demo runs on sample logs from <a href="scripts/demo.ts"><code>scripts/demo.ts</code></a>.</sub>
@@ -45,8 +45,8 @@ Renders `pinocchio-card.png` locally (satori + resvg), sized for X, LinkedIn and
 
 <table>
   <tr>
-    <td width="50%"><img src="https://raw.githubusercontent.com/rosehgal/pinocchio/main/docs/card.png" alt="Card quoting “All 42 tests pass.”, said 48s after pytest -q failed"></td>
-    <td width="50%"><img src="https://raw.githubusercontent.com/rosehgal/pinocchio/main/docs/card-clean.png" alt="Clean record card: no claim came right after a failing test run"></td>
+    <td width="50%"><img src="docs/card.png" alt="Card quoting “All 42 tests pass.”, said 48s after pytest -q failed"></td>
+    <td width="50%"><img src="docs/card-clean.png" alt="Clean record card: no claim came right after a failing test run"></td>
   </tr>
   <tr>
     <td align="center"><sub>Caught one</sub></td>
@@ -73,6 +73,8 @@ Nose: 0 cm (1 cm per claim made right after a failing test run)
 ```
 
 The agent never claimed a pass right after a failure, but nearly a third of its "tests pass" came after code it changed and never re-tested.
+
+Also on GitHub Packages as [`@rosehgal/pinocchio-cli`](https://github.com/rosehgal/pinocchio/pkgs/npm/pinocchio-cli).
 
 ## Options
 
