@@ -77,7 +77,7 @@ function card(tests: Claim[], days: number, sessions: number): CardData {
     headline: `“${w.quote}”`,
     verdict: saidAfter(w),
     meta: `${when(w.ts)} · ${harness(w.session)} · ${project(w.session)}`,
-    stats: `${tests.length} “tests pass” claims in the ${span(days)}: ${tally}`,
+    stats: `“Tests pass” claims, ${span(days)}: ${tally}`,
     nose: nose(tests),
     tone: 'red',
   };
@@ -123,8 +123,10 @@ async function audit(days: number, opt: { json?: boolean; share?: boolean; out?:
   ];
   for (const [label, color, meaning] of rows)
     out.push(`  ${styleText(color, label.padEnd(13))}${String(count(tests, label)).padStart(5)}  ${styleText('dim', meaning)}`);
-  out.push('', `"Done" claims after code edits: ${done.length}`);
-  out.push(`  ${(['VERIFIED', 'STALE', 'UNVERIFIED'] as Label[]).map((l) => `${l} ${count(done, l)}`).join(' · ')}`);
+  if (done.length) {
+    out.push('', `"Done" claims after code edits: ${done.length}`);
+    out.push(`  ${(['VERIFIED', 'STALE', 'UNVERIFIED'] as Label[]).map((l) => `${l} ${count(done, l)}`).join(' · ')}`);
+  }
   const w = worst(tests);
   const lies = tests.filter((c) => c.label === 'CONTRADICTED').slice(-5).reverse();
   if (w) {

@@ -52,8 +52,8 @@ export async function renderCard(d: CardData): Promise<Buffer> {
       div({ fontSize: 24, marginTop: 10, color: WOOD }, d.meta),
     ),
     div(
-      { justifyContent: 'space-between', alignItems: 'flex-end', fontSize: 22, borderTop: `2px solid ${WOOD}`, paddingTop: 20 },
-      div({ maxWidth: 780 }, d.stats),
+      { justifyContent: 'space-between', alignItems: 'flex-end', fontSize: 20, borderTop: `2px solid ${WOOD}`, paddingTop: 20 },
+      div({ maxWidth: 820 }, d.stats),
       div({ fontFamily: 'Mono', fontSize: 24, fontWeight: 400 }, 'npx pinocchio-cli'),
     ),
   );
