@@ -1,0 +1,41 @@
+{
+  "name": "pinocchio-cli",
+  "version": "0.1.0",
+  "description": "Checks your coding agent's \"done, all tests pass\" against the commands it actually ran.",
+  "type": "module",
+  "bin": {
+    "pinocchio": "dist/cli.js",
+    "pinocchio-cli": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "test": "node --test test/classify.test.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "keywords": [
+    "claude-code",
+    "codex",
+    "coding-agent",
+    "hooks",
+    "testing",
+    "cli"
+  ],
+  "repository": "github:rosehgal/pinocchio",
+  "license": "MIT",
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@resvg/resvg-js": "^2.6.2",
+    "satori": "^0.63.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
