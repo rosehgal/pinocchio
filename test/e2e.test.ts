@@ -71,7 +71,8 @@ writeFileSync(
 writeFileSync(join(day, 'rollout-2026-11-03T10-00-00-imp.jsonl'), jsonl([{ timestamp: at(300), type: 'session_meta', payload: { id: 'imp1', cwd: repo } }, message(301, 'assistant', 'All tests pass.')]));
 writeFileSync(join(codex, 'external_agent_session_imports.json'), JSON.stringify({ records: [{ imported_thread_id: 'imp1' }] }));
 
-const env = { ...process.env, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, NO_COLOR: '1' };
+const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: claude, CODEX_HOME: codex, NO_COLOR: '1' };
+delete env.FORCE_COLOR; // with NO_COLOR, Node warns on stderr
 const cli = (args: string[], input?: string) => {
   const r = spawnSync(process.execPath, [join(import.meta.dirname, '../src/cli.ts'), ...args], { env, input, encoding: 'utf8' });
   assert.equal(r.stderr, '', r.stderr);
