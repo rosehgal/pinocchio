@@ -13,7 +13,9 @@
   "scripts": {
     "build": "tsc",
     "prepare": "tsc",
-    "test": "node --test test/classify.test.ts"
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc -p test",
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=22.18"
@@ -37,5 +39,10 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
+  },
+  "author": "Rohit Sehgal",
+  "homepage": "https://github.com/rosehgal/pinocchio#readme",
+  "bugs": {
+    "url": "https://github.com/rosehgal/pinocchio/issues"
   }
 }

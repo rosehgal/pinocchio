@@ -15,7 +15,7 @@ It reads your Claude Code (`~/.claude/projects`) and Codex (`~/.codex/sessions`)
 | UNVERIFIED | no passing run backs it: nothing ran, or the result was unreadable |
 | CONTRADICTED | said right after a failing test run |
 
-Everything stays on your machine. No account, no API key, no network, no telemetry. Node 22.18 or newer.
+Everything stays on your machine. No account, no API key, no network, no telemetry. Needs Node 22.18 or newer; tested on macOS and Linux (Windows is untested).
 
 ```
 Pinocchio · 300 sessions (Claude Code 279, Codex 21) · last 30 days
@@ -34,6 +34,19 @@ Nose: 0 cm (1 cm per claim made right after a failing test run)
 
 That is the author's last 30 days. The agent was sloppy about re-running tests after its last edit, but it never claimed a pass right after a failure.
 
+## Options
+
+```
+--days N         how far back to look (default 30; standup 1)
+--project DIR    only sessions started in DIR or below it
+--share          also render the share card
+--out FILE       card path (default ./pinocchio-card.png)
+--json           every claim with its label, reason and log file
+-v, --version    print the version
+```
+
+Logs are read from `$CLAUDE_CONFIG_DIR/projects` (default `~/.claude`) and `$CODEX_HOME/sessions` (default `~/.codex`). Exit codes: 0 on success (whatever the verdicts), 1 on an unexpected error, 2 on a bad flag. Set `DEBUG=1` for stack traces.
+
 ## The nose
 
 1 cm per CONTRADICTED claim. Nothing else grows it.
@@ -44,7 +57,7 @@ That is the author's last 30 days. The agent was sloppy about re-running tests a
 npx pinocchio-cli --share
 ```
 
-Writes `pinocchio-card.png`, rendered locally with satori and resvg. The card quotes your worst contradicted claim, with its timestamp and the command that failed. With no contradicted claims it shows a clean record instead. It never quotes an UNVERIFIED claim, because "no test run found" can also mean a run Pinocchio did not recognize, and a screenshot should not accuse anyone on a maybe.
+Writes `pinocchio-card.png`, rendered locally with satori and resvg. The card quotes your worst contradicted claim, with its timestamp and the command that failed. With no contradicted claims it shows a clean record instead. The card prints the quote and the project folder name, so read it before you post it. It never quotes an UNVERIFIED claim, because "no test run found" can also mean a run Pinocchio did not recognize, and a screenshot should not accuse anyone on a maybe.
 
 ## Guard: block the lie before you read it
 
@@ -115,7 +128,11 @@ Known misses, all of which land in UNVERIFIED rather than CONTRADICTED:
 
 ```bash
 git clone https://github.com/rosehgal/pinocchio && cd pinocchio
-npm install && npm test && node dist/cli.js
+npm install            # also builds dist/
+npm run typecheck && npm test
+node dist/cli.js
 ```
+
+The tests build fake Claude Code and Codex homes on disk and run the real CLI against them. A regression case found in real logs goes in `test/`, next to the rule it protects.
 
 MIT License

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { basename, relative, resolve } from 'node:path';
+import { basename, relative, resolve, sep } from 'node:path';
 import { parseArgs, styleText } from 'node:util';
 import type { CardData } from './card.ts';
 import { ago, classify, DOC, type Claim, type Label } from './classify.ts';
-import { readSession, sessionFiles, type Session } from './sessions.ts';
+import { logRoots, readSession, sessionFiles, type Session } from './sessions.ts';
 
 const HELP = `Pinocchio checks your coding agent's "done, all tests pass" against what it actually ran.
 
@@ -15,10 +16,16 @@ Usage
   pinocchio guard                                  Claude Code Stop hook (hook JSON on stdin)
 
 Options
-  --days N     how far back to look (default 30; standup 1)
-  --share      also render the worst claim as a PNG card
-  --out FILE   card path (default ./pinocchio-card.png)
-  --json       print every claim as JSON`;
+  --days N         how far back to look (default 30; standup 1)
+  --project DIR    only sessions started in DIR or below it
+  --share          also render the worst claim as a PNG card
+  --out FILE       card path (default ./pinocchio-card.png)
+  --json           print every claim as JSON
+  -v, --version    print the version
+  -h, --help       print this help
+
+Logs: $CLAUDE_CONFIG_DIR/projects (default ~/.claude) and $CODEX_HOME/sessions (default ~/.codex).
+Docs: https://github.com/rosehgal/pinocchio`;
 
 const DAY = 86_400_000;
 const project = (s: Session) => basename(s.cwd) || '?';
@@ -30,11 +37,13 @@ const count = (cs: Claim[], l: Label) => cs.filter((c) => c.label === l).length;
 // The nose grows 1 cm per claim made right after a failing test run, and only for those.
 const nose = (tests: Claim[]) => count(tests, 'CONTRADICTED');
 
-function load(days: number) {
+function load(days: number, dir?: string) {
   const since = Date.now() - days * DAY;
+  const root = dir && resolve(dir);
   const sessions = sessionFiles(since)
     .map(readSession)
-    .filter((s): s is Session => !!s && s.events.some((e) => e.ts >= since));
+    .filter((s): s is Session => !!s && s.events.some((e) => e.ts >= since))
+    .filter((s) => !root || s.cwd === root || s.cwd.startsWith(root + sep));
   const seen = new Set<string>(); // resumed and forked sessions repeat earlier messages
   const claims = sessions
     .flatMap(classify)
@@ -59,7 +68,7 @@ function card(tests: Claim[], days: number, sessions: number): CardData {
     return {
       headline: `${tests.length} “tests pass” claims. None came right after a failing test run.`,
       verdict: tally,
-      meta: `${sessions} Claude Code and Codex sessions · last ${days} days`,
+      meta: `${sessions} Claude Code and Codex sessions · ${span(days)}`,
       stats: 'Pinocchio checks every claim against the test commands the agent actually ran.',
       nose: 0,
       tone: 'green',
@@ -68,14 +77,19 @@ function card(tests: Claim[], days: number, sessions: number): CardData {
     headline: `“${w.quote}”`,
     verdict: saidAfter(w),
     meta: `${when(w.ts)} · ${harness(w.session)} · ${project(w.session)}`,
-    stats: `${tests.length} “tests pass” claims in ${days} days: ${tally}`,
+    stats: `${tests.length} “tests pass” claims in the ${span(days)}: ${tally}`,
     nose: nose(tests),
     tone: 'red',
   };
 }
 
-async function audit(days: number, opt: { json?: boolean; share?: boolean; out?: string }) {
-  const { sessions, claims } = load(days);
+const span = (days: number) => (days === 1 ? 'last 24 hours' : `last ${days} days`);
+const NO_LOGS = (dir?: string) =>
+  `No Claude Code or Codex sessions found${dir ? ` for ${resolve(dir)}` : ''} in the time window. Looked in:\n${logRoots().map((r) => `  ${r}`).join('\n')}`;
+
+async function audit(days: number, opt: { json?: boolean; share?: boolean; out?: string; project?: string }) {
+  const { sessions, claims } = load(days, opt.project);
+  if (!sessions.length && !opt.json) return console.log(NO_LOGS(opt.project));
   if (opt.json) {
     const rows = claims.map((c) => ({
       time: new Date(c.ts).toISOString(),
@@ -97,7 +111,7 @@ async function audit(days: number, opt: { json?: boolean; share?: boolean; out?:
   const never = tests.filter((c) => c.why === 'no test command ran').length;
   const out = [
     '',
-    `${styleText('bold', 'Pinocchio')} · ${sessions.length} sessions (Claude Code ${claude}, Codex ${sessions.length - claude}) · last ${days} days`,
+    `${styleText('bold', 'Pinocchio')} · ${sessions.length} sessions (Claude Code ${claude}, Codex ${sessions.length - claude}) · ${span(days)}`,
     '',
     `"Tests pass" claims: ${tests.length}`,
   ];
@@ -181,8 +195,9 @@ function iouKind(line: string): string | undefined {
   return IOUS.find(([, re, inComment]) => re.test(inComment ? comment : line))?.[0];
 }
 
-function standup(days: number): string {
-  const { since, sessions, claims } = load(days);
+function standup(days: number, dir?: string): string {
+  const { since, sessions, claims } = load(days, dir);
+  if (!sessions.length) return NO_LOGS(dir);
   const last = new Map<string, Claim>(); // one line per answered prompt
   for (const c of claims) if (c.label === 'VERIFIED') last.set(`${c.session.file}#${c.turn}`, c);
   const shipped = [...last.values()].map((c) => {
@@ -222,7 +237,7 @@ function standup(days: number): string {
   const cap = (xs: string[]) => (xs.length > 15 ? [...xs.slice(0, 15), `• …and ${xs.length - 15} more`] : xs);
   const today = new Date().toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
   return [
-    `*Standup* · ${today} · last ${days === 1 ? '24h' : `${days} days`}`,
+    `*Standup* · ${today} · ${span(days)}`,
     '',
     '*Done, with a passing test run behind it*',
     ...(shipped.length ? cap(shipped) : ['• nothing verified']),
@@ -238,30 +253,54 @@ function standup(days: number): string {
 
 // ---- main ----------------------------------------------------------------
 
-const { values: opt, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    days: { type: 'string' },
-    json: { type: 'boolean' },
-    share: { type: 'boolean' },
-    out: { type: 'string' },
-    help: { type: 'boolean', short: 'h' },
-  },
+process.stdout.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EPIPE') process.exit(0); // `pinocchio | head`
+  throw e;
 });
-const days = (fallback: number) => {
-  const n = opt.days === undefined ? fallback : Number(opt.days);
-  if (!(n > 0)) throw new Error(`--days needs a positive number, got ${opt.days}`);
-  return n;
-};
-const command = positionals[0];
-if (opt.help) console.log(HELP);
-else if (command === 'guard') {
+
+const options = {
+  days: { type: 'string' },
+  project: { type: 'string' },
+  json: { type: 'boolean' },
+  share: { type: 'boolean' },
+  out: { type: 'string' },
+  version: { type: 'boolean', short: 'v' },
+  help: { type: 'boolean', short: 'h' },
+} as const;
+
+async function main(argv: string[]) {
+  const command = argv[0] === 'guard' || argv[0] === 'standup' ? argv[0] : undefined;
+  if (command === 'guard') {
+    try {
+      guard();
+    } catch {} // a broken hook must never trap the agent
+    return;
+  }
+  let parsed;
   try {
-    guard();
-  } catch {} // a broken hook must never trap the agent
-} else if (command === 'standup') console.log(standup(days(1)));
-else if (!command) await audit(days(30), opt);
-else {
-  console.error(`Unknown command: ${command}\n\n${HELP}`);
-  process.exitCode = 2;
+    parsed = parseArgs({ args: command ? argv.slice(1) : argv, options, allowPositionals: false });
+  } catch (e) {
+    console.error(`pinocchio: ${(e as Error).message}\n\n${HELP}`);
+    process.exitCode = 2;
+    return;
+  }
+  const opt = parsed.values;
+  if (opt.help) return console.log(HELP);
+  if (opt.version) return console.log(createRequire(import.meta.url)('../package.json').version);
+  const n = opt.days === undefined ? (command === 'standup' ? 1 : 30) : Number(opt.days);
+  if (!(n > 0 && n <= 3650)) {
+    console.error(`pinocchio: --days needs a number of days between 1 and 3650, got "${opt.days}"`);
+    process.exitCode = 2;
+    return;
+  }
+  if (command === 'standup') console.log(standup(n, opt.project));
+  else await audit(n, opt);
+}
+
+try {
+  await main(process.argv.slice(2));
+} catch (e) {
+  console.error(`pinocchio: ${(e as Error).message}`);
+  if (process.env.DEBUG) console.error(e);
+  process.exitCode = 1;
 }

@@ -35,26 +35,59 @@ function logsUnder(dir: string): string[] {
   }
 }
 
+/** Where the logs live, for messages. */
+export const logRoots = () => [join(claudeHome(), 'projects'), join(codexHome(), 'sessions')];
+
 /** Claude Code and Codex session logs modified at or after `since` (epoch ms). */
 export function sessionFiles(since = 0): string[] {
-  return [...logsUnder(join(claudeHome(), 'projects')), ...logsUnder(join(codexHome(), 'sessions'))].filter(
-    (f) => statSync(f).mtimeMs >= since,
-  );
+  return logRoots()
+    .flatMap(logsUnder)
+    .filter((f) => {
+      try {
+        return statSync(f).mtimeMs >= since;
+      } catch {
+        return false; // deleted while we scanned: live sessions rotate and clean up
+      }
+    });
 }
 
+/** null when the file is unreadable or is a copy of another harness's session. Never throws. */
 export function readSession(file: string): Session | null {
-  let buf: Buffer;
   try {
-    buf = readFileSync(file);
+    let buf = readFileSync(file);
     if (file.endsWith('.zst')) buf = zstdDecompressSync(buf);
+    return basename(file).startsWith('rollout-') ? parseCodex(buf, file) : parseClaude(buf, file);
   } catch {
     return null;
   }
-  return basename(file).startsWith('rollout-') ? parseCodex(buf.toString('utf8'), file) : parseClaude(buf.toString('utf8'), file);
 }
 
+// Lines straight from the buffer: a multi-hundred-MB log never becomes one giant string.
+function* lines(buf: Buffer): Generator<string> {
+  for (let start = 0; start < buf.length; ) {
+    const nl = buf.indexOf(10, start);
+    const end = nl < 0 ? buf.length : nl;
+    if (end > start) yield buf.toString('utf8', start, end);
+    start = end + 1;
+  }
+}
+
+// Each record on its own: one malformed or unexpected line must not lose the session.
+function* records(buf: Buffer, keep: (line: string) => boolean = () => true): Generator<any> {
+  for (const line of lines(buf)) {
+    if (!keep(line)) continue;
+    try {
+      yield JSON.parse(line);
+    } catch {} // a half-written last line of a live session, or junk
+  }
+}
+
+// Keeps memory flat across thousands of runs; runners print their verdict at the start or the end.
+const MAX_OUTPUT = 96_000;
+const clamp = (out: string) => (out.length > MAX_OUTPUT ? `${out.slice(0, 16_000)}\n…\n${out.slice(-80_000)}` : out);
+
 const blockText = (c: unknown): string =>
-  typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => b?.text ?? '').join('\n') : '';
+  typeof c === 'string' ? c : Array.isArray(c) ? c.map((b) => (typeof b?.text === 'string' ? b.text : '')).join('\n') : '';
 
 function addedLines(before: string, after: string): string[] {
   const old = new Set(before.split('\n'));
@@ -66,25 +99,21 @@ const fullOutput = (out: string) => readOr(/^<persisted-output>\s*Output too lar
 
 const readOr = (path: string | undefined, fallback: string) => {
   try {
-    return path ? readFileSync(path, 'utf8') : fallback;
+    return clamp(path ? readFileSync(path, 'utf8') : fallback);
   } catch {
-    return fallback;
+    return clamp(fallback);
   }
 };
 
-function parseClaude(text: string, file: string): Session {
+function parseClaude(buf: Buffer, file: string): Session {
   const s: Session = { harness: 'claude', id: basename(file, '.jsonl'), file, cwd: '', events: [] };
   const pending = new Map<string, any>();
   const background = new Map<string, string>(); // task id -> command; the result arrives later as a task notification
-  for (const line of text.split('\n')) {
-    if (!line.includes('"type":"assistant"') && !line.includes('"type":"user"') && !line.includes('"queued_command"')) continue;
-    let o: any;
-    try {
-      o = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const ts = Date.parse(o.timestamp);
+  const wanted = (l: string) => l.includes('"type":"assistant"') || l.includes('"type":"user"') || l.includes('"queued_command"');
+  let ts = 0;
+  for (const o of records(buf, wanted)) {
+    if (!o || typeof o !== 'object') continue;
+    ts = Date.parse(o.timestamp) || ts;
     if (o.type === 'attachment' && o.attachment?.type === 'queued_command') {
       s.events.push({ kind: 'user', ts, text: blockText(o.attachment.prompt) });
       continue;
@@ -95,22 +124,24 @@ function parseClaude(text: string, file: string): Session {
     if (o.type === 'assistant') {
       if (o.message?.model === '<synthetic>' || !Array.isArray(content)) continue;
       for (const b of content) {
-        if (b.type === 'text' && b.text) s.events.push({ kind: 'say', ts, text: b.text });
-        else if (b.type === 'tool_use') pending.set(b.id, b);
+        if (b?.type === 'text' && typeof b.text === 'string' && b.text) s.events.push({ kind: 'say', ts, text: b.text });
+        else if (b?.type === 'tool_use') pending.set(b.id, b);
       }
       continue;
     }
-    const blocks: any[] = typeof content === 'string' ? [{ type: 'text', text: content }] : (content ?? []);
-    const isPrompt = !o.isMeta && !o.isCompactSummary && !blocks.some((b) => b.type === 'tool_result');
+    const blocks: any[] = typeof content === 'string' ? [{ type: 'text', text: content }] : Array.isArray(content) ? content : [];
+    const isPrompt = !o.isMeta && !o.isCompactSummary && !blocks.some((b) => b?.type === 'tool_result');
     for (const b of blocks) {
-      if (b.type === 'text' && isPrompt && !b.text.startsWith('<')) s.events.push({ kind: 'user', ts, text: b.text });
-      const done = b.type === 'text' && /<task-id>(\w+)<\/task-id>[\s\S]*?(?:<output-file>([^<]+)<\/output-file>)?[\s\S]*?<status>(\w+)<\/status>(?:[\s\S]*?\(exit code (\d+)\))?/.exec(b.text);
-      if (done && background.has(done[1])) {
-        const exit = done[4] != null ? Number(done[4]) : null;
-        s.events.push({ kind: 'run', ts, cmd: background.get(done[1])!, exit, output: readOr(done[2], '') });
-        background.delete(done[1]);
+      if (b?.type === 'text' && typeof b.text !== 'string') continue;
+      if (b?.type === 'text' && isPrompt && !b.text.startsWith('<')) s.events.push({ kind: 'user', ts, text: b.text });
+      const task = b?.type === 'text' ? /<task-id>(\w+)<\/task-id>/.exec(b.text)?.[1] : undefined;
+      if (task && background.has(task)) {
+        const code = /\(exit code (\d+)\)/.exec(b.text)?.[1];
+        const output = readOr(/<output-file>([^<]+)<\/output-file>/.exec(b.text)?.[1]?.trim(), '');
+        s.events.push({ kind: 'run', ts, cmd: background.get(task)!, exit: code != null ? Number(code) : null, output });
+        background.delete(task);
       }
-      if (b.type !== 'tool_result' || !pending.has(b.tool_use_id)) continue;
+      if (b?.type !== 'tool_result' || !pending.has(b.tool_use_id)) continue;
       const use = pending.get(b.tool_use_id);
       pending.delete(b.tool_use_id);
       const input = use.input ?? {};
@@ -173,27 +204,22 @@ function patchEdits(patch: string, ts: number, cwd: string): Event[] {
   return edits;
 }
 
-function parseCodex(text: string, file: string): Session | null {
+function parseCodex(buf: Buffer, file: string): Session | null {
   const s: Session = { harness: 'codex', id: basename(file).replace(/\.jsonl(\.zst)?$/, ''), file, cwd: '', events: [] };
   // Newer Codex logs every command and file change as a completed item; older logs only have the raw tool calls.
-  const items = text.includes('"CommandExecution"') || text.includes('"FileChange"');
+  const items = buf.includes('"CommandExecution"') || buf.includes('"FileChange"');
   const calls = new Map<string, string>();
-  for (const line of text.split('\n')) {
-    if (!line) continue;
-    let o: any;
-    try {
-      o = JSON.parse(line);
-    } catch {
-      continue;
-    }
+  let ts = 0;
+  for (const o of records(buf)) {
+    if (!o || typeof o !== 'object') continue;
     const p = o.payload ?? {};
-    const ts = Date.parse(o.timestamp);
+    ts = Date.parse(o.timestamp) || ts;
     if (o.type === 'session_meta') {
       if (imported().has(p.id)) return null;
       s.id = p.id ?? s.id;
       s.cwd ||= p.cwd ?? '';
     } else if (o.type === 'response_item' && p.type === 'message') {
-      const t = (p.content ?? []).map((c: any) => c.text ?? '').join('\n');
+      const t = blockText(p.content);
       if (p.role === 'assistant' && t) s.events.push({ kind: 'say', ts, text: t });
       else if (p.role === 'user' && t && !/^\s*[<#]/.test(t)) s.events.push({ kind: 'user', ts, text: t });
     } else if (o.type === 'response_item' && !items) {
@@ -212,14 +238,14 @@ function parseCodex(text: string, file: string): Session | null {
       } else if (p.type === 'local_shell_call') {
         calls.set(p.call_id, script(p.action?.command));
       } else if (p.type === 'function_call_output' && calls.has(p.call_id)) {
-        const out = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
+        const out = clamp(typeof p.output === 'string' ? p.output : JSON.stringify(p.output ?? ''));
         const code = /(?:Process exited with code|Exit code:?)\s*(-?\d+)|"exit_code":\s*(-?\d+)/.exec(out);
         s.events.push({ kind: 'run', ts, cmd: calls.get(p.call_id)!, exit: code ? Number(code[1] ?? code[2]) : null, output: out });
       }
     } else if (o.type === 'event_msg' && p.type === 'item_completed') {
       const it = p.item ?? {};
       if (it.type === 'CommandExecution') {
-        s.events.push({ kind: 'run', ts, cmd: script(it.command), exit: it.exit_code ?? null, output: it.aggregated_output ?? '' });
+        s.events.push({ kind: 'run', ts, cmd: script(it.command), exit: typeof it.exit_code === 'number' ? it.exit_code : null, output: clamp(String(it.aggregated_output ?? '')) });
       } else if (it.type === 'FileChange') {
         for (const [path, ch] of Object.entries<any>(it.changes ?? {})) {
           const added = ch.content != null ? String(ch.content).split('\n')
